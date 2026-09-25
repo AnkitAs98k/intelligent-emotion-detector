@@ -1,62 +1,54 @@
-import streamlit as st
+from flask import Flask, request, jsonify, render_template
 import numpy as np
 import pickle
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-# 1. Define UI Page Configuration
-st.set_page_config(page_title="Emotion Classifier", page_icon="🎭")
-st.title("🎭 Text Emotion Classifier")
-st.write("Enter some text below, and the LSTM model will predict the underlying emotion.")
+app = Flask(__name__)
 
-# 2. Load the Model and Tokenizer
-# We use @st.cache_resource so these large files only load once when the app starts
-@st.cache_resource
-def load_ml_assets():
-    model = load_model("Artifacts/lstm_model.keras")
-    with open("Artifacts/tokenizer.pkl", "rb") as file:
-        tokenizer = pickle.load(file)
-    return model, tokenizer
+# Load the model and tokenizer globally so they only load once when the server starts
+model = load_model("Artifacts/lstm_model.keras")
+with open("Artifacts/tokenizer.pkl", "rb") as file:
+    tokenizer = pickle.load(file)
 
-try:
-    model, tokenizer = load_ml_assets()
-except Exception as e:
-    st.error(f"Error loading model or tokenizer. Please ensure the 'Artifacts' folder exists. Details: {e}")
-    st.stop()
-
-# 3. Define the Label Mapping
-# Based on the dair-ai/emotion dataset classes
+# Label mapping based on your dataset
 emotion_labels = {
-    0: ("Sadness", "😢"),
-    1: ("Joy", "😂"),
-    2: ("Love", "❤️"),
-    3: ("Anger", "😡"),
-    4: ("Fear", "😨"),
-    5: ("Surprise", "😲")
+    0: "Sadness 😢",
+    1: "Joy 😂",
+    2: "Love ❤️",
+    3: "Anger 😡",
+    4: "Fear 😨",
+    5: "Surprise 😲"
 }
 
-# 4. User Input
-user_input = st.text_area("What's on your mind?", placeholder="I am thrilled with the way my skin and hair feel...", height=150)
+@app.route('/')
+def home():
+    # Serves the index.html file from your templates folder
+    return render_template('index.html')
 
-# 5. Prediction Logic
-if st.button("Predict Emotion", type="primary"):
-    if user_input.strip() == "":
-        st.warning("Please enter some text to classify.")
-    else:
-        with st.spinner("Analyzing text..."):
-            # Preprocess the text exactly as done in training
-            sequence = tokenizer.texts_to_sequences([user_input])
-            padded_sequence = pad_sequences(sequence, maxlen=50, padding='post', truncating='post')
-            
-            # Make prediction
-            prediction = model.predict(padded_sequence)
-            predicted_class = np.argmax(prediction, axis=1)[0]
-            confidence = np.max(prediction) * 100
-            
-            # Fetch label and emoji
-            emotion_name, emoji = emotion_labels.get(predicted_class, ("Unknown", "❓"))
-            
-            # Display Results
-            st.success("Analysis Complete!")
-            st.markdown(f"### Predicted Emotion: {emotion_name} {emoji}")
-            st.progress(int(confidence), text=f"Confidence: {confidence:.2f}%")
+@app.route('/predict', methods=['POST'])
+def predict():
+    # Receive data from the frontend
+    data = request.json
+    text = data.get('text', '')
+    
+    if not text.strip():
+        return jsonify({'error': 'Please enter some text.'})
+    
+    # Preprocess the text
+    sequence = tokenizer.texts_to_sequences([text])
+    padded_sequence = pad_sequences(sequence, maxlen=50, padding='post', truncating='post')
+    
+    # Predict emotion
+    prediction = model.predict(padded_sequence)
+    predicted_class = int(np.argmax(prediction, axis=1)[0])
+    confidence = float(np.max(prediction))
+    
+    # Send the result back to the frontend
+    return jsonify({
+        'emotion': emotion_labels.get(predicted_class, "Unknown"),
+        'confidence': round(confidence * 100, 2)
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
